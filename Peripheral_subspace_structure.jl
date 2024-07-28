@@ -1,5 +1,5 @@
 using LinearAlgebra
-
+include("Jordan.jl")
 
 
 """
@@ -155,38 +155,36 @@ Compute the peripheral projector of the superoperator from the Kraus operators.
 - `T_P::Matrix{Complex{Float64}}`: The peripheral projector matrix.
 """
 function compute_peripheral_projector(kraus_ops::Vector, threshold::Float64=1e-4)
-    d = size(kraus_ops[1], 1)
-    d2 = d * d
+    d = size(kraus_ops[1], 1)  # Dimension of the Kraus operators
+    d2 = d * d  # Dimension of the resulting matrix
 
     # Initialize T as a zero matrix of size d2 × d2
     T = zeros(Complex{Float64}, d2, d2)
     
     # Sum Ti ⊗ Ti* for all Kraus operators
     for Ti in kraus_ops
-        T += kron(Ti, conj(Ti))
+        T += kron(Ti, conj(Ti))  # Kronecker product of Ti and its complex conjugate
     end
     
-    # Compute the eigenvalues and eigenvectors of T
-    eigvals, eigvecs = eigen(T)
-    
-    # Select the eigenvectors with eigenvalue modulus 1 within the given threshold
-    selected_indices = findall(x -> abs(abs(x) - 1) < threshold, eigvals)
-    selected_vectors = [eigvecs[:, i] for i in selected_indices]
-    
-    # Orthogonalize the selected eigenvectors using Gram-Schmidt
-    orthogonal_vectors = gram_schmidt(selected_vectors)
-    
-    # Initialize the peripheral projector
-    T_P = zeros(Complex{Float64}, d2, d2)
-    
-    # Sum the projectors for orthonormal eigenvectors
-    for psi in orthogonal_vectors
-        T_P += psi * psi'
+    # Compute the Jordan canonical form of T
+    P = jordan_canonical_form(T)  # Matrix P for Jordan decomposition
+    J = inv(P) * T * P  # Jordan form J
+
+    # Initialize S as a zero matrix of size d2 × d2
+    S = zeros(Complex{Float64}, d2, d2)
+
+    # Iterate over the diagonal elements of J
+    for i in 1:d2
+        if abs(J[i, i]) > 1 - threshold  # Check if the eigenvalue modulus is approximately 1
+            S[i, i] = 1  # Set the corresponding element in S to 1
+        end
     end
+
+    # Compute the peripheral projector T_P
+    T_P = P * S * inv(P)
     
     return T_P
 end
-
 
 
 

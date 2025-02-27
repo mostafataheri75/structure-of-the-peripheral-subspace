@@ -15,7 +15,7 @@ Compute the structure of the peripheral subspace given Kraus operators.
 - `central_projections::Vector{Matrix{Complex{Float64}}}`: Central projections.
 - `minimal_projections::Vector{Vector{Matrix{Complex{Float64}}}}`: Minimal projections within each central projection.
 """
-function structure_of_peripheral_subspace(kraus_ops::Vector, threshold::Float64=1e-4)
+ function structure_of_peripheral_subspace(kraus_ops::Vector, threshold::Float64=1e-4,print_structure=true)
     d = size(kraus_ops[1], 1)
     
     # Compute the peripheral projector
@@ -24,7 +24,9 @@ function structure_of_peripheral_subspace(kraus_ops::Vector, threshold::Float64=
     # Get right and left eigenvectors with eigenvalue modulus 1
     right_eigvecs_fixed, left_eigvecs_fixed = left_and_right_eigenvectors_with_eigenvalue_one(T_p, threshold)
     
-    # Make left eigenvectors Hermitian and orthogonalize them
+    # Make  eigenvectors Hermitian and orthogonalize them
+    right_eigvecs_fixed = make_hermitian_and_orthogonalize(right_eigvecs_fixed, threshold)
+
     left_eigvecs_fixed = make_hermitian_and_orthogonalize(left_eigvecs_fixed, threshold)
     
     # Compute the projector to the support of the subspace spanned by left eigenvectors
@@ -37,12 +39,17 @@ function structure_of_peripheral_subspace(kraus_ops::Vector, threshold::Float64=
     central_projections, minimal_projections = structure_of_algebra(A_basis, threshold)
     
     # Print the number of sectors and dimensions
-    println("Number of Sectors K= ", size(central_projections)[1]) 
-    for i in 1:size(central_projections)[1]
-        println("d_$i = ", size(minimal_projections[i])[1], "\t d'_$i = ", Int(round(real(tr(minimal_projections[i][1])), digits=1)))
-    end
+    if print_structure
+        println("Number of Sectors K= ", size(central_projections)[1]) 
+        for i in 1:size(central_projections)[1]
+            println("d_$i = ", size(minimal_projections[i])[1], "\t d'_$i = ", Int(round(real(tr(minimal_projections[i][1])), digits=1)))
+        end
+    end 
 
-    return central_projections, minimal_projections
+    basis_set,U_matrix = construct_basis(A_basis, central_projections, minimal_projections, threshold)
+
+
+    return central_projections, minimal_projections, basis_set,U_matrix
 end
 
 
@@ -62,7 +69,7 @@ Compute the structure of the fixed point subspace given Kraus operators.
 - `central_projections::Vector{Matrix{Complex{Float64}}}`: Central projections.
 - `minimal_projections::Vector{Vector{Matrix{Complex{Float64}}}}`: Minimal projections within each central projection.
 """
-function structure_of_fixed_subspace(kraus_ops::Vector, threshold::Float64=1e-4)
+function structure_of_fixed_subspace(kraus_ops::Vector, threshold::Float64=1e-4,print_structure=true)
     d = size(kraus_ops[1], 1)
     d2 = d * d
     
@@ -77,9 +84,10 @@ function structure_of_fixed_subspace(kraus_ops::Vector, threshold::Float64=1e-4)
     # Get right and left eigenvectors with eigenvalue modulus 1
     right_eigvecs_fixed, left_eigvecs_fixed = left_and_right_eigenvectors_with_eigenvalue_one(T, threshold)
     
-    # Make left eigenvectors Hermitian and orthogonalize them
+    # Make  eigenvectors Hermitian and orthogonalize them
+    right_eigvecs_fixed = make_hermitian_and_orthogonalize(right_eigvecs_fixed, threshold)
+
     left_eigvecs_fixed = make_hermitian_and_orthogonalize(left_eigvecs_fixed, threshold)
-    
     # Compute the projector to the support of the subspace spanned by left eigenvectors
     left_eigvecs_fixed_support_projector= projector_to_support_of_subspace(left_eigvecs_fixed, threshold)
     
@@ -88,17 +96,109 @@ function structure_of_fixed_subspace(kraus_ops::Vector, threshold::Float64=1e-4)
     
     # Determine the structure of the algebra
     central_projections, minimal_projections = structure_of_algebra(A_basis, threshold)
+
     
     # Print the number of sectors and dimensions
-    println("Number of Sectors K= ", size(central_projections)[1]) 
-    for i in 1:size(central_projections)[1]
-        println("d_$i = ", size(minimal_projections[i])[1], "\t d'_$i = ", Int(round(real(tr(minimal_projections[i][1])), digits=1)))
+    if print_structure
+        println("Number of Sectors K= ", size(central_projections)[1]) 
+        for i in 1:size(central_projections)[1]
+            println("d_$i = ", size(minimal_projections[i])[1], "\t d'_$i = ", Int(round(real(tr(minimal_projections[i][1])), digits=1)))
+        end
     end
+    
 
-    return central_projections, minimal_projections
+    basis_set,U_matrix = construct_basis(A_basis, central_projections, minimal_projections, threshold)
+
+
+    return central_projections, minimal_projections, basis_set,U_matrix
 end
 
 
+
+
+"""
+    construct_basis(A_matrices::Vector{Matrix{Complex{Float64}}}, 
+                    central_projections::Vector{Matrix{Complex{Float64}}}, 
+                    minimal_projections::Vector{Vector{Matrix{Complex{Float64}}}}, 
+                    threshold::Float64=1e-4)
+
+Construct the basis vectors e_{k,i,j} for the algebra  mathcal{A} .
+
+# Arguments
+- `A_matrices::Vector{Matrix{Complex{Float64}}}`: Matrices spanning the algebra mathcal{A} .
+- `central_projections::Vector{Matrix{Complex{Float64}}}`: Orthogonal minimal central projections {P_k}.
+- `minimal_projections::Vector{Vector{Matrix{Complex{Float64}}}}`: Minimal projections{P_{k,i}}  for each  P_k .
+- `threshold::Float64`: Numerical threshold for approximations (default is 1e-4).
+
+# Returns
+- `basis_set::Vector{Vector{Vector{Matrix{Complex{Float64}}}}}`: Basis vectors e_{k,i,j} .
+- unitary_matrix: A unitary matrix (d x d) constructed for changing the basis.
+
+"""
+function construct_basis(A_matrices,central_projections,minimal_projections,threshold=1e-4,print_structure=true)
+    # Number of minimal central projections
+    K = length(central_projections)
+    
+    # Initialize d[k] and d_prime[k]
+    d = [length(minimal_projections[k]) for k in 1:K]
+    d_prime = [Int(round(real(tr(minimal_projections[k][1])), digits=1)) for k in 1:K]
+    
+    # Step 1: Compute eigenvectors for minimal projections
+    eigenVectors = []
+    for k in 1:K
+        push!(eigenVectors, [])
+        for i in 1:d[k]
+            evals, evecs = eigen(minimal_projections[k][i])
+            unit_eigenvecs = [evecs[:, j] for j in 1:length(evals) if abs(evals[j] - 1) < threshold]
+            push!(eigenVectors[k], unit_eigenvecs)
+        end
+    end
+    
+    # Step 2: Construct matrices U^{k,1,n}
+    U = []
+    for k in 1:K
+        push!(U, [])
+        for n in 1:d[k]
+            V = zeros(Complex{Float64}, d_prime[k], d_prime[k])
+            found_valid = false
+            while !found_valid
+                for A in A_matrices
+                    for i in 1:d_prime[k], j in 1:d_prime[k]
+                        V[i, j] = eigenVectors[k][n][j]' * A * eigenVectors[k][1][i]
+                    end
+                    if norm(V) > threshold
+                        found_valid = true
+                        break
+                    end
+                end
+            end
+            normalize_factor = sqrt(real(tr(V' * V)))
+            push!(U[k], V / normalize_factor)
+        end
+    end
+    # Step 3: Construct basis vectors e_{k,i,j}
+    basis_set = []
+    unitary_matrix = []  # Collect all basis vectors to form the unitary matrix
+
+    for k in 1:K
+        push!(basis_set, [])
+        for i in 1:d[k]
+            push!(basis_set[k], [])
+            for j in 1:d_prime[k]
+                basis_vector = zeros(Complex{Float64}, size(A_matrices[1], 1))
+                for m in 1:d_prime[k]
+                    basis_vector += U[k][i][j, m] * eigenVectors[k][i][m]
+                end
+                push!(basis_set[k][i], basis_vector)
+                push!(unitary_matrix, basis_vector)  # Add the basis vector to the unitary matrix
+
+            end
+        end
+    end
+    unitary_matrix = hcat(unitary_matrix...)  # Stack vectors as columns
+
+    return basis_set, unitary_matrix
+end
 
 
 
@@ -127,6 +227,10 @@ function structure_of_algebra(A_matrices::Vector, threshold::Float64=1e-4)
     C_matrices=make_hermitian_and_orthogonalize(center_generators, threshold)
     
     # Find the minimal projections in the center
+    # ######## instead of using Identity we should use the projector to support of center
+    I_d=projector_to_support_of_subspace(A_matrices, threshold)
+    C_matrices=project_matrices(C_matrices, I_d) # this is for the zero part in the algebra 
+    #println("trace Id=",tr(I_d))
     central_projections = find_minimal_projections(I_d, C_matrices, threshold)
 
     # Find the minimal projections in the algebra
@@ -372,7 +476,7 @@ Compute the projected matrices by applying a projector to a set of matrices.
 # Returns
 - `projected_matrices::Vector{Matrix{Complex{Float64}}}`: The set of projected matrices.
 """
-function project_matrices(matrices::Vector{Matrix{Complex{Float64}}}, projector::Matrix{Complex{Float64}})
+function project_matrices(matrices, projector::Matrix{Complex{Float64}})
     projected_matrices = []  # Vector to store the projected matrices
 
     # Compute the projected matrices
